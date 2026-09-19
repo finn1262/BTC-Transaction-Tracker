@@ -1,0 +1,26 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.benchmarks/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local data
+*.db
+*.sqlite3
+
+# Docs
+docs/
+
+# OS
+.DS_Store
+Thumbs.db
