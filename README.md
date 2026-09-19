@@ -1,10 +1,30 @@
+<div align="center">
+
 # BTC Transaction Tracker
 
-A terminal application that aggregates buy/sell Bitcoin market trades from
-major crypto exchanges into one sortable, filterable TUI. Built in Python
-3.14+ with Textual, aiohttp, and SQLite, following the OOP-first architecture
-defined in [`docs/core-philosophy.md`](docs/core-philosophy.md) and the Phase 1
-plan in [`docs/phase-1-plan.md`](docs/phase-1-plan.md).
+**A terminal application that aggregates buy/sell Bitcoin market trades from
+major crypto exchanges into one sortable, filterable TUI.**
+
+[![Python 3.14+](https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Textual](https://img.shields.io/badge/TUI-Textual-3D8B8B)](https://textual.textualize.io/)
+[![aiohttp](https://img.shields.io/badge/Async-aiohttp-2C5BB4)](https://docs.aiohttp.org/)
+[![SQLite](https://img.shields.io/badge/Storage-SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![Tests: pytest](https://img.shields.io/badge/Tests-pytest-0A9EDC?logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-3DA639)](pyproject.toml)
+
+Built following the OOP-first architecture defined in
+[`docs/core-philosophy.md`](docs/core-philosophy.md) and the Phase 1 plan in
+[`docs/phase-1-plan.md`](docs/phase-1-plan.md).
+
+[Setup](#setup) ·
+[Running](#running) ·
+[Keybindings](#keybindings) ·
+[Real-Time Behavior](#real-time-behavior) ·
+[Architecture](#architecture) ·
+[Configuration](#configuration) ·
+[Testing](#testing)
+
+</div>
 
 ## Phase 1 Status
 
