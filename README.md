@@ -148,7 +148,7 @@ All settings are read from environment variables or `.env`
 | `MAX_RETRIES` | `3` | Attempts per HTTP request |
 | `DEFAULT_RATE_LIMIT_REQUESTS` | `10` | Requests allowed per rate-limit window |
 | `DEFAULT_RATE_LIMIT_WINDOW_SECONDS` | `1.0` | Rate-limit window length in seconds |
-| `POLL_INTERVAL_SECONDS` | `5.0` | Seconds between live polls of each source |
+| `POLL_INTERVAL_SECONDS` | `2.0` | Seconds between live polls of each source |
 | `BACKFILL_PAGES` | `3` | Pages fetched per source on its first feed pass |
 | `POLL_PAGES` | `1` | Pages fetched per source on later live polls |
 | `HISTORY_LIMIT` | `50000` | Stored rows hydrated into the feed at startup |

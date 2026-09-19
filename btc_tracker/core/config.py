@@ -43,7 +43,7 @@ class Config(BaseSettings):
     max_retries: int = 3
     default_rate_limit_requests: int = 10
     default_rate_limit_window_seconds: float = 1.0
-    poll_interval_seconds: float = Field(default=5.0, gt=0)
+    poll_interval_seconds: float = Field(default=2.0, gt=0)
     backfill_pages: int = Field(default=3, ge=1)
     poll_pages: int = Field(default=1, ge=1)
     history_limit: int = Field(default=50_000, ge=1)

@@ -75,7 +75,7 @@ class TransactionService:
         storage: AbstractStorage,
         logger: Any = None,
         *,
-        poll_interval: float = 5.0,
+        poll_interval: float = 2.0,
         backfill_pages: int = 3,
         poll_pages: int = 1,
         history_limit: int = 50_000,
