@@ -15,8 +15,7 @@
 </p>
 
 <p align="center">
-  Built in Python 3.14+ following the OOP-first architecture in
-  <a href="docs/core-philosophy.md"><code>docs/core-philosophy.md</code></a>.
+  Built in Python 3.14+ following the OOP-first architecture.
 </p>
 
 <p align="center">
