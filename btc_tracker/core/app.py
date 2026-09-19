@@ -67,6 +67,7 @@ class Application:
         self._logger = logger or LoggerFactory.create("core.app", config.log_level)
         self._session: aiohttp.ClientSession | None = None
         self._storage: SQLiteStorage | None = None
+        self._transaction_service: TransactionService | None = None
 
     async def run(self) -> None:
         """Build dependencies and run the TUI until the user quits."""
@@ -75,9 +76,18 @@ class Application:
         try:
             self._storage = SQLiteStorage(self._config.database_path, self._logger)
             services = self._build_services(self._session)
-            transaction_service = TransactionService(services, self._storage, self._logger)
+            self._transaction_service = TransactionService(
+                services,
+                self._storage,
+                self._logger,
+                poll_interval=self._config.poll_interval_seconds,
+                backfill_pages=self._config.backfill_pages,
+                poll_pages=self._config.poll_pages,
+                history_limit=self._config.history_limit,
+                max_transactions=self._config.max_transactions,
+            )
             ui_app = BTCTrackerApp(
-                transaction_service=transaction_service,
+                transaction_service=self._transaction_service,
                 exporter=CsvExporter(self._logger),
                 config=self._config,
                 logger=self._logger,
@@ -87,6 +97,9 @@ class Application:
             await self._shutdown()
 
     async def _shutdown(self) -> None:
+        if self._transaction_service is not None:
+            await self._transaction_service.stop()
+            self._transaction_service = None
         if self._session is not None:
             await self._session.close()
             self._session = None

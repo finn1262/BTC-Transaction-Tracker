@@ -1,5 +1,6 @@
 """Market-scoped exchange source service."""
 
+import asyncio
 from typing import Any
 
 from btc_tracker.data.models import Transaction
@@ -30,14 +31,22 @@ class ExchangeService(AbstractSourceService):
         """
         super().__init__(fetcher, parser, logger)
 
-    async def fetch_transactions(self, address: str | None = None) -> list[Transaction]:
+    async def fetch_transactions(
+        self, address: str | None = None, *, pages: int | None = None
+    ) -> list[Transaction]:
         """Fetch and map recent exchange market trades.
+
+        Parsing runs in a worker thread: mapping thousands of raw trades is
+        CPU-bound and must never stall the event loop that drives the TUI.
 
         Args:
             address: Ignored; exchange sources are market-scoped.
+            pages: Optional page cap for this fetch.
 
         Returns:
             Mapped transactions.
         """
-        raw = await self._fetcher.fetch()
-        return self._parser.parse(raw)
+        raw = await self._fetcher.fetch(max_pages=pages)
+        if not raw:
+            return []
+        return await asyncio.to_thread(self._parser.parse, raw)

@@ -86,8 +86,13 @@ class AbstractBaseFetcher(ABC):
                 self.source_name, endpoint, self.default_rate_limit[0], self.default_rate_limit[1]
             )
 
-    async def fetch(self) -> list[dict]:
-        """Fetch every page of raw items for this source.
+    async def fetch(self, max_pages: int | None = None) -> list[dict]:
+        """Fetch raw items for this source.
+
+        Args:
+            max_pages: Optional page cap for this call, clamped to the
+                configured maximum. Live-feed polls use one page while the
+                initial backfill may walk several pages.
 
         Returns:
             A flat list of raw provider item dictionaries.
@@ -95,35 +100,42 @@ class AbstractBaseFetcher(ABC):
         Raises:
             FetcherError: If a request fails after all retry attempts.
         """
-        return await self._run_pagination(self._request, self._next_page)
+        return await self._run_pagination(self._request, self._next_page, max_pages)
 
     async def _run_pagination(
         self,
         request: Callable[[str | None], Awaitable[Any]],
         next_page: Callable[[Any, str | None], str | None],
+        max_pages: int | None = None,
     ) -> list[dict]:
         """Drive cursor pagination through the supplied request hook.
 
         Args:
             request: Coroutine function returning one page payload.
             next_page: Callable returning the next cursor or ``None``.
+            max_pages: Optional page cap for this call.
 
         Returns:
             A flat list of extracted items across all pages.
         """
+        page_cap = (
+            self._max_pages
+            if max_pages is None
+            else max(1, min(max_pages, self._max_pages))
+        )
         items: list[dict] = []
         cursor: str | None = None
-        for _ in range(self._max_pages):
+        for _ in range(page_cap):
             payload = await request(cursor)
             items.extend(self._extract_items(payload))
             cursor = next_page(payload, cursor)
             if cursor is None:
                 break
         else:
-            self._logger.warning(
+            self._logger.debug(
                 "%s: pagination capped at %d pages; results may be truncated",
                 self.source_name,
-                self._max_pages,
+                page_cap,
             )
         return items
 
