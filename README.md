@@ -2,9 +2,7 @@
 
 A terminal application that aggregates buy/sell Bitcoin market trades from
 major crypto exchanges into one sortable, filterable TUI. Built in Python
-3.14+ with Textual, aiohttp, and SQLite, following the OOP-first architecture
-defined in [`docs/core-philosophy.md`](docs/core-philosophy.md) and the Phase 1
-plan in [`docs/phase-1-plan.md`](docs/phase-1-plan.md).
+3.14+ with Textual, aiohttp, and SQLite, following the OOP-first architecture.
 
 ## Phase 1 Status
 
