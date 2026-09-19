@@ -9,9 +9,9 @@ major crypto exchanges into one sortable, filterable TUI. Built in Python
 | Layer | Implemented |
 |---|---|
 | Exchanges | Public buy/sell market trades from Binance, Coinbase Exchange, Kraken, Bybit, OKX, KuCoin, Bitget, MEXC, Gemini |
-| Storage | SQLite with integer-satoshi amounts, `(source, external_id)` primary key, indexes, chunked upserts, CSV export |
-| Services | Aggregation, per-source failure isolation, deduplication by `(source, external_id)` |
-| TUI | Sortable/filterable table of trades, buy/sell totals, source filters, detail view, help screen, CSV export |
+| Storage | SQLite with integer-satoshi amounts, `(source, external_id)` primary key, indexes, chunked upserts, incremental live writes, CSV export |
+| Services | Real-time per-source feed loops, per-source failure isolation with backoff, in-memory deduplicating store, health reporting |
+| TUI | Live event-driven table, buy/sell totals, activity sparkline, per-source health, source filters, detail view, help screen, CSV export, responsive layout |
 
 ## Requirements
 
@@ -69,7 +69,7 @@ btc-tracker
 | Key | Action |
 |---|---|
 | `q` | Quit |
-| `r` | Refresh buy/sell trades from all exchanges |
+| `r` | Fetch immediately from all exchanges |
 | `s` | Focus the trade search bar |
 | `f` | Focus the source filter |
 | `t` | Focus the trade table |
@@ -82,6 +82,25 @@ btc-tracker
 Single-key shortcuts apply when the search bar is not focused; press
 `Escape` to blur it.
 
+## Real-Time Behavior
+
+Trades stream in automatically; no manual refresh is required.
+
+- Every source runs its own async feed loop. Loops fetch concurrently, merge
+  new trades into an in-memory store, and persist only new or changed rows.
+- The TUI subscribes to feed events and applies updates incrementally: new
+  rows are appended and re-sorted, cells are patched in place, and the table,
+  totals, activity chart, and per-source health all update together.
+- Rendering is throttled to at most one flush per `UI_FLUSH_INTERVAL_SECONDS`
+  (default 0.25s) so bursts of trades cannot flood the UI, and search input
+  is debounced.
+- A failing source is isolated: it backs off exponentially, its health is
+  shown as `error`, and the remaining sources keep streaming. Press `r` to
+  retry immediately.
+- The table renders at most `RENDER_LIMIT` rows (newest first) while totals
+  cover every loaded trade; the live store keeps at most
+  `MAX_TRANSACTIONS` entities in memory. SQLite retains the full history.
+
 ## Architecture
 
 ```
@@ -91,23 +110,28 @@ btc_tracker/
 ├── fetchers/    Abstract fetcher lifecycle + per-source I/O
 ├── parsers/     Raw payload -> Transaction mapping
 ├── storage/     Abstract storage, SQLite backend, CSV export
-├── services/    Source services + transaction aggregation
+├── services/    Source services, real-time feed, in-memory transaction store
 ├── ui/          Textual app, screens, widgets, styles
 └── utils/       Logging, formatting, rate limiter
 ```
 
-Data flow: `Fetcher -> Parser -> Transaction -> TransactionService -> Storage -> TUI`.
+Data flow:
+`Fetcher -> Parser -> TransactionService feed -> TransactionStore -> TUI events`,
+with the feed persisting new/changed rows to storage as a side effect.
 
 Key design rules:
 
 - Amounts are **integer satoshis** end to end; no floats touch financial data.
 - Fetchers own I/O, parsers own mapping, services compose the pair.
+- Parsing runs in a worker thread: CPU-bound mapping never blocks the event
+  loop that drives the TUI.
 - Exchange fetchers are market-scoped and never receive a wallet address.
 - Exchanges expose **public buy/sell market trades only** (recent BTC pairs,
   no account data). A positive amount is a buy, a negative amount is a sell.
 - All network calls are async (`aiohttp`) and paced by an async sliding-window
   `RateLimiter` with exponential backoff and retry.
-- A failing source is logged and skipped; other sources still complete.
+- The feed and the UI are decoupled by events: the UI never polls for data.
+- A failing source is logged, isolated, and retried; other sources continue.
 
 ## Configuration
 
@@ -122,6 +146,14 @@ All settings are read from environment variables or `.env`
 | `MAX_RETRIES` | `3` | Attempts per HTTP request |
 | `DEFAULT_RATE_LIMIT_REQUESTS` | `10` | Requests allowed per rate-limit window |
 | `DEFAULT_RATE_LIMIT_WINDOW_SECONDS` | `1.0` | Rate-limit window length in seconds |
+| `POLL_INTERVAL_SECONDS` | `5.0` | Seconds between live polls of each source |
+| `BACKFILL_PAGES` | `3` | Pages fetched per source on its first feed pass |
+| `POLL_PAGES` | `1` | Pages fetched per source on later live polls |
+| `HISTORY_LIMIT` | `50000` | Stored rows hydrated into the feed at startup |
+| `MAX_TRANSACTIONS` | `50000` | Maximum entities kept in the live in-memory store |
+| `RENDER_LIMIT` | `1000` | Maximum rows rendered in the trade table |
+| `UI_FLUSH_INTERVAL_SECONDS` | `0.25` | Minimum seconds between UI data flushes |
+| `SEARCH_DEBOUNCE_SECONDS` | `0.15` | Debounce applied to search input changes |
 
 ## Testing
 
@@ -129,10 +161,11 @@ All settings are read from environment variables or `.env`
 python -m pytest
 ```
 
-The suite mirrors the package layout and covers unit behavior, mocked network
-I/O, the full fetch -> parse -> store -> export pipeline, headless Textual
-screens, and the Phase 1 performance targets (10k transactions parsed and
-serialized in under 2 seconds; cold start under 3 seconds).
+The suite covers the transaction store, the real-time feed (incremental
+persistence, failure isolation and recovery, event delivery), SQLite storage,
+formatting, headless Textual screens (real-time updates, filtering, sorting,
+cursor retention, resize profiles, export), performance guardrails, and
+bounded high-volume stress runs.
 
 ## Notes
 

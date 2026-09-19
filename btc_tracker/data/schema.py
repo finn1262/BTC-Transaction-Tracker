@@ -4,7 +4,7 @@ Schemas describe the external wire format only; domain conversion belongs to
 the parser layer.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class ApiSchema(BaseModel):

@@ -23,35 +23,75 @@ class Styles:
         background: $surface;
     }
 
+    #body {
+        height: 1fr;
+    }
+
+    #toolbar {
+        height: 3;
+        padding: 0 1;
+    }
+
     TradeSearchBar {
-        dock: top;
-        margin: 1 2 0 2;
+        width: 1fr;
     }
 
     SourceFilterTabs {
-        dock: top;
-        margin: 1 2 0 2;
-        width: 44;
+        width: 34;
+        margin-left: 1;
+    }
+
+    #main-area {
+        height: 1fr;
     }
 
     TransactionTable {
-        height: 1fr;
-        margin: 1 2;
+        width: 1fr;
+    }
+
+    #sidebar {
+        width: 40;
+        display: none;
+        padding: 0 1;
+        border-left: solid $panel;
+    }
+
+    MainScreen.wide #sidebar {
+        display: block;
+    }
+
+    .panel-title {
+        height: 1;
+        color: $text-muted;
+        text-style: bold;
+    }
+
+    StatsPanel {
+        height: auto;
+    }
+
+    ActivityPanel {
+        height: auto;
+        margin-top: 1;
+    }
+
+    SourceHealthPanel {
+        height: auto;
+        margin-top: 1;
     }
 
     SummaryPanel {
-        dock: bottom;
         height: 1;
         padding: 0 2;
+        background: $panel;
         color: $text-muted;
     }
 
     StatusBar {
-        dock: bottom;
         height: 1;
+        padding: 0 2;
         background: $panel;
         color: $text;
-        padding: 0 2;
     }
 
     TransactionDetailScreen #detail-panel,

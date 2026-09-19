@@ -49,11 +49,15 @@ class AbstractSourceService(ABC):
         return self._parser
 
     @abstractmethod
-    async def fetch_transactions(self, address: str | None = None) -> list[Transaction]:
+    async def fetch_transactions(
+        self, address: str | None = None, *, pages: int | None = None
+    ) -> list[Transaction]:
         """Fetch and map transactions for this source.
 
         Args:
             address: Wallet address for address-scoped sources.
+            pages: Optional page cap for this fetch; ``None`` uses the
+                source default.
 
         Returns:
             Mapped transactions.

@@ -1,8 +1,37 @@
-"""Structured, Rich-formatted logging factory."""
+"""Structured logging factory that stays out of the TUI's way.
+
+While a Textual app is running, records are routed to the app's logging
+system instead of the terminal so they never corrupt the rendered screen.
+Outside an app, Rich-formatted output goes to stderr as before.
+"""
 
 import logging
 
 from rich.logging import RichHandler
+from textual.logging import TextualHandler, active_app
+
+
+class _TrackerHandler(logging.Handler):
+    """Route records to the active Textual app, or Rich when none is running."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        formatter = logging.Formatter("%(message)s")
+        self._rich = RichHandler(
+            rich_tracebacks=True,
+            show_path=False,
+            show_time=True,
+            markup=False,
+        )
+        self._rich.setFormatter(formatter)
+        self._textual = TextualHandler()
+        self._textual.setFormatter(formatter)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if active_app.get(None) is not None:
+            self._textual.emit(record)
+        else:
+            self._rich.emit(record)
 
 
 class LoggerFactory:
@@ -26,15 +55,8 @@ class LoggerFactory:
         root = logging.getLogger(cls.LOGGER_NAME)
         root.setLevel(level.upper())
         root.propagate = False
-        if not any(isinstance(handler, RichHandler) for handler in root.handlers):
-            handler = RichHandler(
-                rich_tracebacks=True,
-                show_path=False,
-                show_time=True,
-                markup=False,
-            )
-            handler.setFormatter(logging.Formatter("%(message)s"))
-            root.addHandler(handler)
+        if not any(isinstance(handler, _TrackerHandler) for handler in root.handlers):
+            root.addHandler(_TrackerHandler())
         cls._configured_level = level.upper()
 
     @classmethod

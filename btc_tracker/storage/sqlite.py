@@ -85,6 +85,7 @@ class SQLiteStorage(AbstractStorage):
         """
         try:
             with closing(self._connect()) as connection:
+                connection.execute("PRAGMA journal_mode=WAL")
                 connection.executescript(SCHEMA)
                 connection.commit()
         except sqlite3.Error as exc:
@@ -196,5 +197,5 @@ class SQLiteStorage(AbstractStorage):
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._path, timeout=30.0)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=NORMAL")
         return connection

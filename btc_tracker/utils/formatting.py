@@ -119,6 +119,34 @@ class Formatter:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
         return timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
+    def format_count(self, value: int) -> str:
+        """Format an integer with thousands separators.
+
+        Args:
+            value: Integer to format.
+
+        Returns:
+            A string such as ``"21,088"``.
+        """
+        return f"{int(value):,}"
+
+    def format_age(self, seconds: float) -> str:
+        """Format an elapsed duration for compact status displays.
+
+        Args:
+            seconds: Elapsed time in seconds; negative values mean "just now".
+
+        Returns:
+            A string such as ``"just now"``, ``"12s ago"``, ``"4m ago"``, or ``"2h ago"``.
+        """
+        if seconds < 5:
+            return "just now"
+        if seconds < 60:
+            return f"{int(seconds)}s ago"
+        if seconds < 3600:
+            return f"{int(seconds // 60)}m ago"
+        return f"{int(seconds // 3600)}h ago"
+
     def shorten(self, value: str, leading: int = 8, trailing: int = 6) -> str:
         """Shorten a long identifier for narrow table columns.
 
