@@ -116,43 +116,31 @@ Single-key shortcuts apply when the search bar is not focused; press
 
 Trades stream in automatically; no manual refresh is required.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant M as main.py
-    participant APP as Application
-    participant UI as MainScreen
-    participant TS as TransactionService
-    participant SRC as Source task x9
-    participant ES as ExchangeService
-    participant ST as TransactionStore
-    participant DB as SQLiteStorage
+```text
+Startup
+  main.py ──▶ Application.main()
+              │
+              ├─▶ SQLiteStorage: initialize schema
+              ├─▶ ExchangeService ×9: construct
+              └─▶ MainScreen.run_async()
+                  │
+                  ├─▶ TransactionService.subscribe(listener)
+                  └─▶ TransactionService.start() in a worker
+                      │
+                      ├─▶ SQLiteStorage.get_all(history_limit)
+                      ├─▶ TransactionStore.merge(stored)
+                      └─▶ Source task ×9: create_task
 
-    M->>APP: Application.main()
-    APP->>DB: initialize schema
-    APP->>TS: construct 9 ExchangeServices
-    APP->>UI: run_async()
-    UI->>TS: subscribe(listener)
-    UI->>TS: start() in a worker
-    TS->>DB: get_all(history_limit)
-    DB-->>TS: stored transactions
-    TS->>ST: merge(stored)
-    TS->>SRC: create_task per source
-
-    loop every poll_interval (default 2s)
-        SRC->>ES: fetch_transactions(pages)
-        ES->>ES: fetcher.fetch + parser.parse in worker thread
-        ES-->>SRC: transactions
-        SRC->>ST: merge(transactions)
-        alt changed rows
-            SRC->>DB: save(added + updated)
-            SRC-->>UI: TransactionsChanged event
-            UI->>UI: mark dirty, flush at most every 0.25s
-        else source failure
-            SRC-->>UI: SourceStatusChanged event
-            SRC->>SRC: backoff min(poll x 2^n, 60s)
-        end
-    end
+Feed loop per source (every poll_interval, default 2s)
+  Source task
+  │
+  ├─▶ ExchangeService.fetch_transactions(pages)
+  │   └─▶ fetcher.fetch + parser.parse in a worker thread
+  ├─▶ TransactionStore.merge(transactions)
+  ├─▶ SQLiteStorage.save(added + updated)   [rows changed]
+  ├─▶ TransactionsChanged ──▶ MainScreen (flush at most every 0.25s)
+  └─▶ SourceStatusChanged + backoff         [source failure]
+      backoff = min(poll × 2^min(failures, 8), 60s) × jitter
 ```
 
 - Every source runs its own async feed loop. Loops fetch concurrently, merge
@@ -172,21 +160,22 @@ sequenceDiagram
 
 ### Source health states
 
-```mermaid
-stateDiagram-v2
-    [*] --> idle
-    idle --> fetching: source task starts
-    fetching --> ok: fetch, merge, persist succeed
-    ok --> fetching: poll interval elapsed
-    fetching --> error: exception raised
-    error --> fetching: backoff elapsed or refresh()
-    fetching --> idle: stop() cancels task
-    error --> idle: stop() cancels task
+```text
+State transitions
 
-    note right of error
-        consecutive_failures += 1
-        delay = min(poll x 2^min(failures, 8), 60s) x jitter
-    end note
+  [*] ──▶ idle          application start
+  idle ──▶ fetching     source task starts
+  fetching ──▶ ok       fetch, merge, and persist succeed
+  ok ──▶ fetching       poll interval elapsed
+  fetching ──▶ error    exception raised
+  error ──▶ fetching    backoff elapsed or refresh()
+  fetching ──▶ idle     stop() cancels task
+  error ──▶ idle        stop() cancels task
+
+Backoff on failure
+
+  consecutive_failures += 1
+  delay = min(poll × 2^min(failures, 8), 60s) × jitter
 ```
 
 Each source owns an `asyncio.Event` wakeup handle, so `refresh()` (the `r`
@@ -196,50 +185,40 @@ key) skips the remaining backoff and fetches immediately.
 
 ### System overview
 
-```mermaid
-flowchart LR
-    subgraph EXCH["Exchange REST APIs (public market data)"]
-        direction TB
-        BIN["Binance"]
-        CB["Coinbase Exchange"]
-        KRK["Kraken"]
-        BYB["Bybit"]
-        OKX["OKX"]
-        KC["KuCoin"]
-        BG["Bitget"]
-        MXC["MEXC"]
-        GEM["Gemini"]
-    end
-
-    subgraph FETCH["btc_tracker.fetchers"]
-        BF["AbstractBaseFetcher<br/>pagination / retries / RateLimiter"]
-    end
-
-    subgraph PARSE["btc_tracker.parsers"]
-        BP["AbstractBaseParser<br/>pydantic validation / satoshi mapping"]
-    end
-
-    subgraph SVC["btc_tracker.services"]
-        ES["ExchangeService<br/>one per source"]
-        TS["TransactionService<br/>feed loops / events / health"]
-        STORE["TransactionStore<br/>dedup / stats / activity"]
-    end
-
-    subgraph STOR["btc_tracker.storage"]
-        SQL["SQLiteStorage<br/>chunked upserts"]
-        CSV["CsvExporter"]
-    end
-
-    subgraph UIL["btc_tracker.ui"]
-        MS["MainScreen<br/>throttled incremental flush"]
-    end
-
-    EXCH --> BF --> ES
-    ES --> BP --> TS
-    TS --> STORE
-    TS -->|"new / changed rows"| SQL
-    TS -->|"events + snapshots"| MS
-    MS -->|"export filtered view"| CSV
+```text
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Exchange REST APIs (public market data)                                  │
+│ Binance · Coinbase Exchange · Kraken · Bybit · OKX · KuCoin · Bitget ·   │
+│ MEXC · Gemini                                                            │
+└──────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│ btc_tracker.fetchers                                                     │
+│ AbstractBaseFetcher — pagination / retries / RateLimiter                 │
+└──────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│ btc_tracker.parsers                                                      │
+│ AbstractBaseParser — pydantic validation / satoshi mapping               │
+└──────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│ btc_tracker.services                                                     │
+│ ExchangeService — one per source                                         │
+│ TransactionService — feed loops / events / health                        │
+│ TransactionStore — dedup / stats / activity                              │
+└──────────────┬───────────────────────────────────────┬───────────────────┘
+              │ new / changed rows                    │ events + snapshots
+              ▼                                       ▼
+┌─────────────────────────────┐    ┌───────────────────────────────────────┐
+│ btc_tracker.storage         │    │ btc_tracker.ui                        │
+│ SQLiteStorage — chunked     │    │ MainScreen — throttled                │
+│ upserts                     │    │ incremental flush +                   │
+│ CsvExporter — filtered view │    │ CSV export                            │
+└─────────────────────────────┘    └───────────────────────────────────────┘
 ```
 
 ### Module map
@@ -258,36 +237,21 @@ btc_tracker/
 
 Dependency direction (arrows point at imported packages):
 
-```mermaid
-flowchart TB
-    ENTRY["main.py / btc-tracker console script"]
-    CORE["core<br/>Application, Config"]
-    FETCH["fetchers<br/>9 exchange clients"]
-    PARSE["parsers<br/>payload to Transaction"]
-    SVC["services<br/>ExchangeService, TransactionService, TransactionStore"]
-    STOR["storage<br/>SQLiteStorage, CsvExporter"]
-    UI["ui<br/>Textual app, screens, widgets"]
-    DATA["data<br/>Transaction model, wire schemas"]
-    UTILS["utils<br/>logging, formatting, rate limiter"]
-
-    ENTRY --> CORE
-    CORE --> FETCH
-    CORE --> PARSE
-    CORE --> SVC
-    CORE --> STOR
-    CORE --> UI
-    SVC --> FETCH
-    SVC --> PARSE
-    SVC --> STOR
-    SVC --> DATA
-    FETCH --> UTILS
-    PARSE --> DATA
-    PARSE --> UTILS
-    STOR --> DATA
-    STOR --> UTILS
-    UI --> DATA
-    UI --> SVC
-    UI --> UTILS
+```text
+main.py / btc-tracker console script
+  │
+  ▼
+core — Application, Config
+  │
+  ├─▶ fetchers — 9 exchange clients ──▶ utils
+  ├─▶ parsers — payload to Transaction ──▶ data, utils
+  ├─▶ services — ExchangeService, TransactionService, TransactionStore
+  │     ├─▶ fetchers
+  │     ├─▶ parsers
+  │     ├─▶ storage
+  │     └─▶ data
+  ├─▶ storage — SQLiteStorage, CsvExporter ──▶ data, utils
+  └─▶ ui — Textual app, screens, widgets ──▶ services, data, utils
 ```
 
 ### Data flow
@@ -300,60 +264,55 @@ Fetcher ──▶ Parser ──▶ TransactionService feed ──▶ Transaction
 
 ### Core abstractions
 
-```mermaid
-classDiagram
-    class AbstractBaseFetcher {
-        <<abstract>>
-        +source_name
-        +fetch(max_pages)
-        #_request(cursor)
-        #_extract_items(payload)
-    }
-    class AbstractBaseParser {
-        <<abstract>>
-        +source_name
-        +parse(raw, address)
-        #_map_item(item, address)
-    }
-    class AbstractSourceService {
-        <<abstract>>
-        +source_name
-        +fetch_transactions(pages)
-    }
-    class AbstractStorage {
-        <<abstract>>
-        +save(transactions)
-        +get_all(limit)
-    }
-    class ExchangeService {
-        +fetch_transactions(pages)
-    }
-    class TransactionService {
-        +start()
-        +stop()
-        +refresh(source_name)
-        +subscribe(listener)
-    }
-    class TransactionStore {
-        +merge(transactions)
-        +snapshot()
-        +stats()
-        +activity_minutes(minutes)
-    }
-    class SQLiteStorage
-    class CsvExporter
-    class Transaction
+```text
+┌──────────────────────────────────┐    ┌──────────────────────────────────┐
+│            «abstract»            │    │            «abstract»            │
+│       AbstractBaseFetcher        │    │        AbstractBaseParser        │
+├──────────────────────────────────┤    ├──────────────────────────────────┤
+│ + source_name                    │    │ + source_name                    │
+│ + fetch(max_pages)               │    │ + parse(raw, address)            │
+│ # _request(cursor)               │    │ # _map_item(item, address)       │
+│ # _extract_items(payload)        │    └──────────────────────────────────┘
+└──────────────────────────────────┘
+┌──────────────────────────────────┐    ┌──────────────────────────────────┐
+│            «abstract»            │    │            «abstract»            │
+│      AbstractSourceService       │    │         AbstractStorage          │
+├──────────────────────────────────┤    ├──────────────────────────────────┤
+│ + source_name                    │    │ + save(transactions)             │
+│ + fetch_transactions(pages)      │    │ + get_all(limit)                 │
+└──────────────────────────────────┘    └──────────────────────────────────┘
+┌──────────────────────────────────┐    ┌──────────────────────────────────┐
+│         ExchangeService          │    │        TransactionService        │
+├──────────────────────────────────┤    ├──────────────────────────────────┤
+│ + fetch_transactions(pages)      │    │ + start()                        │
+└──────────────────────────────────┘    │ + stop()                         │
+                                        │ + refresh(source_name)           │
+                                        │ + subscribe(listener)            │
+                                        └──────────────────────────────────┘
+┌──────────────────────────────────┐    ┌──────────────────────────────────┐
+│         TransactionStore         │    │          SQLiteStorage           │
+├──────────────────────────────────┤    └──────────────────────────────────┘
+│ + merge(transactions)            │
+│ + snapshot()                     │
+│ + stats()                        │
+│ + activity_minutes(minutes)      │
+└──────────────────────────────────┘
+┌──────────────────────────────────┐    ┌──────────────────────────────────┐
+│           CsvExporter            │    │           Transaction            │
+└──────────────────────────────────┘    └──────────────────────────────────┘
 
-    ExchangeService ..|> AbstractSourceService
-    SQLiteStorage ..|> AbstractStorage
-    ExchangeService o-- AbstractBaseFetcher
-    ExchangeService o-- AbstractBaseParser
-    TransactionService o-- AbstractSourceService
-    TransactionService o-- AbstractStorage
-    TransactionService --> TransactionStore
-    TransactionStore o-- Transaction
-    SQLiteStorage ..> Transaction
-    CsvExporter ..> Transaction
+Relations
+
+  ExchangeService    ..|>  AbstractSourceService   implements
+  SQLiteStorage      ..|>  AbstractStorage         implements
+  ExchangeService    o--   AbstractBaseFetcher     has-a
+  ExchangeService    o--   AbstractBaseParser      has-a
+  TransactionService o--   AbstractSourceService   has-a
+  TransactionService o--   AbstractStorage         has-a
+  TransactionService -->   TransactionStore        uses
+  TransactionStore   o--   Transaction             has-a
+  SQLiteStorage      ..>   Transaction             depends on
+  CsvExporter        ..>   Transaction             depends on
 ```
 
 ### Exchange sources
@@ -378,20 +337,22 @@ timeouts, retries, and `429`/`5xx` handling live in `AbstractBaseFetcher`.
 
 ### Storage schema
 
-```mermaid
-erDiagram
-    TRANSACTIONS {
-        TEXT source PK
-        TEXT external_id PK
-        TEXT address_from
-        TEXT address_to
-        INTEGER amount_sats
-        INTEGER fee_sats
-        DATETIME timestamp
-        TEXT status
-        INTEGER block_number
-        DATETIME created_at
-    }
+```text
+TRANSACTIONS
+┌──────────────┬──────────┬────────────────────────────────┐
+│ Column       │ Type     │ Notes                          │
+├──────────────┼──────────┼────────────────────────────────┤
+│ source       │ TEXT     │ PK · exchange name             │
+│ external_id  │ TEXT     │ PK · exchange trade id         │
+│ address_from │ TEXT     │                                │
+│ address_to   │ TEXT     │                                │
+│ amount_sats  │ INTEGER  │ signed · positive = buy        │
+│ fee_sats     │ INTEGER  │                                │
+│ timestamp    │ DATETIME │ trade time                     │
+│ status       │ TEXT     │                                │
+│ block_number │ INTEGER  │                                │
+│ created_at   │ DATETIME │ row insert time                │
+└──────────────┴──────────┴────────────────────────────────┘
 ```
 
 - Composite primary key `(source, external_id)` deduplicates trades per
