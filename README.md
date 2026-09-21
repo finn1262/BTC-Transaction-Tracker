@@ -39,8 +39,8 @@
 
 ## Requirements
 
-- Python 3.14 or newer
-- A terminal with true-color support (recommended)
+- Python 3.14 or newer.
+- A terminal with true-color support (recommended).
 
 ## Setup
 
