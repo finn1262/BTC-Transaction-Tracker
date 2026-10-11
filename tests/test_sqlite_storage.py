@@ -1,11 +1,14 @@
 """Unit tests for the SQLite storage backend."""
 
+import asyncio
 from pathlib import Path
+from threading import Event
 
 import pytest
 
 from tests.conftest import make_transaction
 
+from btc_tracker.data.models import Transaction
 from btc_tracker.storage.sqlite import SQLiteStorage
 
 
@@ -70,3 +73,30 @@ class TestRoundTrip:
         transactions = [make_transaction(str(index)) for index in range(1_500)]
         assert await storage.save(transactions) == 1_500
         assert await storage.count() == 1_500
+
+    async def test_history_conversion_keeps_event_loop_responsive(
+        self, storage: SQLiteStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        transaction = make_transaction("history")
+        await storage.save([transaction])
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = Event()
+        from_dict = Transaction.from_dict
+
+        def slow_conversion(data: dict) -> Transaction:
+            loop.call_soon_threadsafe(started.set)
+            if not release.wait(timeout=2.0):
+                raise TimeoutError("event loop stalled during history conversion")
+            return from_dict(data)
+
+        monkeypatch.setattr(Transaction, "from_dict", slow_conversion)
+        load = asyncio.create_task(storage.get_all())
+        try:
+            # The event loop must be able to respond while conversion is busy.
+            await asyncio.wait_for(started.wait(), timeout=3.0)
+            assert not load.done()
+        finally:
+            release.set()
+            loaded = await load
+        assert loaded == [transaction]

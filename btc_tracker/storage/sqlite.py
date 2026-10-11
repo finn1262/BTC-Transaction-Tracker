@@ -4,6 +4,7 @@ import asyncio
 import sqlite3
 from collections.abc import Sequence
 from contextlib import closing
+from itertools import batched
 from pathlib import Path
 from typing import Any
 
@@ -151,16 +152,18 @@ class SQLiteStorage(AbstractStorage):
         return None
 
     def _save_sync(self, transactions: list[Transaction]) -> int:
-        rows = [transaction.to_dict() for transaction in transactions]
         try:
             with closing(self._connect()) as connection:
-                for start in range(0, len(rows), self.BATCH_SIZE):
-                    connection.executemany(self._UPSERT_SQL, rows[start : start + self.BATCH_SIZE])
+                for batch in batched(transactions, self.BATCH_SIZE):
+                    connection.executemany(
+                        self._UPSERT_SQL,
+                        (transaction.to_dict() for transaction in batch),
+                    )
                 connection.commit()
         except sqlite3.Error as exc:
             raise StorageError(f"failed to save transactions: {exc}") from exc
-        self._logger.debug("stored %d transactions", len(rows))
-        return len(rows)
+        self._logger.debug("stored %d transactions", len(transactions))
+        return len(transactions)
 
     def _delete_sync(self, source: str, external_id: str) -> bool:
         try:
@@ -183,14 +186,15 @@ class SQLiteStorage(AbstractStorage):
             raise StorageError(f"failed to count transactions: {exc}") from exc
 
     async def _fetch(self, sql: str, params: Sequence[Any]) -> list[Transaction]:
-        rows = await asyncio.to_thread(self._fetch_sync, sql, params)
-        return [Transaction.from_dict(dict(row)) for row in rows]
+        return await asyncio.to_thread(self._fetch_sync, sql, params)
 
-    def _fetch_sync(self, sql: str, params: Sequence[Any]) -> list[sqlite3.Row]:
+    def _fetch_sync(self, sql: str, params: Sequence[Any]) -> list[Transaction]:
         try:
             with closing(self._connect()) as connection:
                 cursor = connection.execute(sql, params)
-                return cursor.fetchall()
+                # Reconstruct entities in this worker too: history hydration
+                # must not block the UI or retain a second list of raw rows.
+                return [Transaction.from_dict(dict(row)) for row in cursor]
         except sqlite3.Error as exc:
             raise StorageError(f"query failed: {exc}") from exc
 

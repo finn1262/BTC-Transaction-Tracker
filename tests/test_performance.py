@@ -64,6 +64,34 @@ def test_store_remerge_10k_is_fast() -> None:
     assert elapsed < 1.0, f"remerge took {elapsed:.3f}s"
 
 
+def test_live_updates_with_50k_history_under_fifty_ms_per_batch() -> None:
+    """Measure the steady-state merge and dashboard reads at the default cap."""
+    store = TransactionStore(max_transactions=50_000)
+    store.merge(ordered_transactions(50_000))
+    store.stats()
+    now = datetime.now(timezone.utc)
+    batches = [
+        [
+            make_transaction(
+                f"live-{batch}-{index}",
+                timestamp=now + timedelta(seconds=batch, microseconds=index),
+            )
+            for index in range(25)
+        ]
+        for batch in range(10)
+    ]
+    start = time.perf_counter()
+    for batch in batches:
+        store.merge(batch)
+        store.snapshot()
+        store.stats()
+        store.activity_minutes(30)
+    elapsed = (time.perf_counter() - start) / len(batches)
+    assert store.total == 50_000
+    assert store.snapshot()[0] is batches[-1][-1]
+    assert elapsed < 0.05, f"live update averaged {elapsed:.3f}s per batch"
+
+
 async def test_feed_pipeline_10k_under_three_seconds() -> None:
     source = FakeSource("binance", batch_size=10_000)
     storage = InMemoryStorage()

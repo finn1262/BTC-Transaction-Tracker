@@ -145,6 +145,10 @@ Feed loop per source (every poll_interval, default 2s)
 
 - Every source runs its own async feed loop. Loops fetch concurrently, merge
   new trades into an in-memory store, and persist only new or changed rows.
+- The store caches ordering keys and adjusts totals and activity counts for
+  added, updated, and evicted trades. Live batches reuse the sorted history;
+  snapshots and statistics are built only when requested and cached until
+  the next change.
 - The TUI subscribes to feed events and applies updates incrementally: new
   rows are appended and re-sorted, cells are patched in place, and the table,
   totals, activity chart, and per-source health all update together.
@@ -360,7 +364,11 @@ TRANSACTIONS
 - Secondary indexes: `idx_address_from`, `idx_address_to`, `idx_timestamp`,
   `idx_source`.
 - Writes are batched (500 rows), serialized by an `asyncio.Lock`, and run off
-  the event loop; `journal_mode=WAL` and `synchronous=NORMAL`.
+  the event loop; rows are serialized as each batch is written, with one
+  commit for the complete save. `journal_mode=WAL` and `synchronous=NORMAL`.
+- History queries reconstruct validated transactions in the worker thread,
+  directly from the cursor, keeping that work off the UI event loop and
+  avoiding an intermediate list of raw database rows.
 - Amounts are stored as integer satoshis. CSV export adds a derived
   `amount_btc` column alongside the raw fields.
 
@@ -431,7 +439,9 @@ The suite covers the transaction store, the real-time feed (incremental
 persistence, failure isolation and recovery, event delivery), SQLite storage,
 formatting, headless Textual screens (real-time updates, filtering, sorting,
 cursor retention, resize profiles, export), performance guardrails, and
-bounded high-volume stress runs.
+bounded high-volume stress runs. Steady-state performance checks include
+small live batches against a full 50,000-trade store; randomized regression
+tests compare incremental totals and activity with full recomputation.
 
 ## Notes
 

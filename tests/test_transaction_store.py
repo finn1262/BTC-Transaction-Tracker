@@ -1,6 +1,9 @@
 """Unit tests for the in-memory transaction store."""
 
 from datetime import datetime, timedelta, timezone
+from random import Random
+
+import pytest
 
 from tests.conftest import make_transaction, ordered_transactions
 
@@ -50,6 +53,21 @@ class TestMerge:
         assert result.changed is False
         assert result.unchanged == 1
 
+    def test_repeated_key_in_batch_retains_only_final_values(self) -> None:
+        from btc_tracker.services.transaction_store import TransactionStore
+
+        now = datetime.now(timezone.utc)
+        store = TransactionStore()
+        first = make_transaction("a", amount_sats=100, timestamp=now)
+        final = make_transaction(
+            "a", amount_sats=-40, timestamp=now - timedelta(minutes=1)
+        )
+        result = store.merge([first, final, final])
+        assert (result.added_count, result.updated_count, result.unchanged) == (1, 1, 1)
+        assert store.snapshot() == [final]
+        assert store.stats().net_sats == -40
+        assert store.activity_minutes(2, now=now) == [1, 0]
+
 
 class TestSnapshot:
     def test_snapshot_is_newest_first(self) -> None:
@@ -70,6 +88,23 @@ class TestSnapshot:
         assert store.snapshot() is first
         store.merge([make_transaction("new", timestamp=datetime.now(timezone.utc))])
         assert store.snapshot() is not first
+
+    def test_timestamp_update_reorders_without_mutating_previous_snapshot(self) -> None:
+        from btc_tracker.services.transaction_store import TransactionStore
+
+        now = datetime.now(timezone.utc)
+        newest = make_transaction("a", timestamp=now)
+        older = make_transaction("b", timestamp=now - timedelta(minutes=1))
+        store = TransactionStore()
+        store.merge([older, newest])
+        previous = store.snapshot()
+        updated = make_transaction("a", timestamp=now - timedelta(minutes=2))
+        store.merge([updated])
+        assert store.snapshot() == [older, updated]
+        assert previous == [newest, older]
+        assert store.stats().latest == older.timestamp
+        assert store.stats().sources[0].latest == older.timestamp
+        assert store.activity_minutes(3, now=now) == [1, 1, 0]
 
     def test_version_increments_on_change(self) -> None:
         from btc_tracker.services.transaction_store import TransactionStore
@@ -172,3 +207,85 @@ class TestBounds:
         store.clear()
         assert store.total == 0
         assert store.snapshot() == []
+        assert store.stats().sources == ()
+        assert store.stats().net_sats == 0
+        assert store.stats().latest is None
+        assert store.activity_minutes(3) == [0, 0, 0]
+        store.merge([make_transaction("after-clear", amount_sats=-5)])
+        assert store.stats().total == 1
+        assert store.stats().net_sats == -5
+
+    def test_evicted_arrivals_are_still_reported_for_persistence(self) -> None:
+        from btc_tracker.services.transaction_store import TransactionStore
+
+        store = TransactionStore(max_transactions=1)
+        now = datetime.now(timezone.utc)
+        newest = make_transaction("new", timestamp=now)
+        old = make_transaction("old", "kraken", timestamp=now - timedelta(days=1))
+        store.merge([newest])
+        result = store.merge([old])
+        assert result.added == (old,)
+        assert store.snapshot() == [newest]
+        assert store.get("kraken", "old") is None
+        assert [source.name for source in store.stats().sources] == ["binance"]
+
+
+@pytest.mark.parametrize("stats_interval", [1, 7])
+def test_incremental_views_match_full_recomputation(stats_interval: int) -> None:
+    """Exercise updates, timestamp ties, evictions, and repeated batch keys."""
+    from btc_tracker.services.transaction_store import TransactionStore
+
+    random = Random(42)
+    now = datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc)
+    store = TransactionStore(max_transactions=20)
+    reference = {}
+    for batch_index in range(50):
+        batch = [
+            make_transaction(
+                str(random.randrange(12)),
+                random.choice(("binance", "kraken", "okx")),
+                amount_sats=random.choice((-100, -20, 0, 10, 200)),
+                timestamp=now - timedelta(seconds=random.randrange(180)),
+            )
+            for _ in range(25)
+        ]
+        for transaction in batch:
+            reference[transaction.dedup_key] = transaction
+        expected = sorted(
+            reference.values(),
+            key=lambda transaction: (
+                -transaction.timestamp.timestamp(),
+                transaction.source,
+                transaction.external_id,
+            ),
+        )[:20]
+        reference = {transaction.dedup_key: transaction for transaction in expected}
+
+        store.merge(batch)
+        assert store.snapshot() == expected
+        assert all(store.get(*key) == transaction for key, transaction in reference.items())
+        if batch_index % stats_interval:
+            continue
+        stats = store.stats()
+        assert stats.total == len(expected)
+        assert stats.buys == sum(transaction.amount_sats > 0 for transaction in expected)
+        assert stats.sells == sum(transaction.amount_sats < 0 for transaction in expected)
+        assert stats.net_sats == sum(transaction.amount_sats for transaction in expected)
+        assert stats.volume_sats == sum(abs(transaction.amount_sats) for transaction in expected)
+        assert stats.latest == expected[0].timestamp
+        assert [source.name for source in stats.sources] == sorted(
+            {transaction.source for transaction in expected}
+        )
+        for source in stats.sources:
+            transactions = [item for item in expected if item.source == source.name]
+            assert source.count == len(transactions)
+            assert source.buy_sats == sum(max(item.amount_sats, 0) for item in transactions)
+            assert source.sell_sats == sum(max(-item.amount_sats, 0) for item in transactions)
+            assert source.net_sats == sum(item.amount_sats for item in transactions)
+            assert source.volume_sats == sum(abs(item.amount_sats) for item in transactions)
+            assert source.latest == max(item.timestamp for item in transactions)
+        current_minute = int(now.timestamp()) // 60
+        assert store.activity_minutes(3, now=now) == [
+            sum(int(item.timestamp.timestamp()) // 60 == minute for item in expected)
+            for minute in range(current_minute - 2, current_minute + 1)
+        ]
